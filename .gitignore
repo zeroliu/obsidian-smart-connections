@@ -5,7 +5,8 @@ package-lock.json
 .DS_Store
 # env
 .vscode
-# symlinks for context
-obsidian-plugins
-notes
-vec_lite
+
+main.js
+styles.css
+data.json
+dist

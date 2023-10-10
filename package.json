@@ -4,7 +4,8 @@
   "description": "Link and chat with your notes using ChatGPT and embedding artificial intelligence from OpenAI.",
   "main": "main.js",
   "scripts": {
-    "bundle": "node esbuild.js"
+    "dev": "node esbuild.mjs",
+    "bundle": "node esbuild.mjs production"
   },
   "repository": {
     "type": "git",
@@ -26,7 +27,14 @@
   },
   "homepage": "https://github.com/brianpetro/obsidian-smart-connections",
   "devDependencies": {
-    "esbuild": "^0.17.19"
+    "@types/node": "^16.11.6",
+    "@typescript-eslint/eslint-plugin": "5.29.0",
+    "@typescript-eslint/parser": "5.29.0",
+    "builtin-modules": "3.3.0",
+    "esbuild": "^0.17.19",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "^5.2.2"
   },
   "dependencies": {
     "vec-lite": "file:../vec_lite"
