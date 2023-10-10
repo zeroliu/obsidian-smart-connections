@@ -26,6 +26,7 @@ function md5(str: string) {
 }
 
 export default class SmartConnectionsPlugin extends Obsidian.Plugin {
+  smart_vec_lite: VecLite;
   settings: SmartConnectionSettings;
   api = null;
   embeddings_loaded = false;
@@ -1060,7 +1061,13 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     this.render_log.tokens_saved_by_cache = 0;
   }
 
-  // find connections by most similar to current note by cosine similarity
+  /**
+   * Aims to find notes that are most similar to a given
+   * current_note based on their embeddings. It uses cosine similarity to
+   * measure this similarity. The function also employs caching to avoid
+   * redundant computations and has mechanisms to exclude certain files based on
+   * their paths.
+   */
   async find_note_connections(current_note = null) {
     // md5 of current note path
     const curr_key = md5(current_note.path);
@@ -1102,7 +1109,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }
 
       // compute cosine similarity between current note and all other notes via embeddings
-      nearest = this.smart_vec_lite.nearest(vec, {
+      nearest = this.smart_vec_lite.find_nearest(vec, {
         skip_key: curr_key,
         skip_sections: this.settings.skip_sections,
       });

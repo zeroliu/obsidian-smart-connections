@@ -1,5 +1,56 @@
-export const VecLite = class {
-  constructor(config) {
+type AdapterFunction = (...args: any[]) => Promise<any>;
+
+interface VecLiteConfig {
+  file_name?: string;
+  folder_path?: string;
+  exists_adapter?: AdapterFunction;
+  mkdir_adapter?: AdapterFunction;
+  read_adapter?: AdapterFunction;
+  rename_adapter?: AdapterFunction;
+  stat_adapter?: AdapterFunction;
+  write_adapter?: AdapterFunction;
+}
+
+interface Embedding {
+  vec: number[];
+  meta: {
+    hash?: string;
+    parent?: string;
+    children?: string[];
+    mtime?: number;
+    size?: number;
+    len?: number;
+    path?: string;
+    src?: string;
+  };
+}
+
+interface NearestFilter {
+  results_count?: number;
+  skip_sections?: boolean;
+  skip_key?: string;
+  path_begins_with?: string | string[];
+}
+
+interface NearestResult {
+  link: string;
+  similarity: number;
+  size: number;
+}
+
+interface CleanupResult {
+  deleted_embeddings: number;
+  total_embeddings: number;
+}
+
+export class VecLite {
+  private config: VecLiteConfig;
+  private file_name: string;
+  private folder_path: string;
+  private file_path: string;
+  private embeddings: Record<string, Embedding>;
+
+  constructor(config: VecLiteConfig) {
     this.config = {
       file_name: 'embeddings-3.json',
       folder_path: '.vec_lite',
@@ -14,51 +65,58 @@ export const VecLite = class {
     this.file_name = this.config.file_name;
     this.folder_path = config.folder_path;
     this.file_path = this.folder_path + '/' + this.file_name;
-    this.embeddings = false;
+    this.embeddings = {};
   }
-  async file_exists(path) {
+
+  async file_exists(path: string): Promise<boolean> {
     if (this.config.exists_adapter) {
       return await this.config.exists_adapter(path);
     } else {
       throw new Error('exists_adapter not set');
     }
   }
-  async mkdir(path) {
+
+  async mkdir(path: string): Promise<void> {
     if (this.config.mkdir_adapter) {
       return await this.config.mkdir_adapter(path);
     } else {
       throw new Error('mkdir_adapter not set');
     }
   }
-  async read_file(path) {
+
+  async read_file(path: string): Promise<string> {
     if (this.config.read_adapter) {
       return await this.config.read_adapter(path);
     } else {
       throw new Error('read_adapter not set');
     }
   }
-  async rename(old_path, new_path) {
+
+  async rename(old_path: string, new_path: string): Promise<void> {
     if (this.config.rename_adapter) {
       return await this.config.rename_adapter(old_path, new_path);
     } else {
       throw new Error('rename_adapter not set');
     }
   }
-  async stat(path) {
+
+  async stat(path: string): Promise<{ size: number }> {
     if (this.config.stat_adapter) {
       return await this.config.stat_adapter(path);
     } else {
       throw new Error('stat_adapter not set');
     }
   }
-  async write_file(path, data) {
+
+  async write_file(path: string, data: string): Promise<void> {
     if (this.config.write_adapter) {
       return await this.config.write_adapter(path, data);
     } else {
       throw new Error('write_adapter not set');
     }
   }
-  async load(retries = 0) {
+
+  async load(retries: number = 0): Promise<boolean> {
     try {
       const embeddings_file = await this.read_file(this.file_path);
       this.embeddings = JSON.parse(embeddings_file);
@@ -69,15 +127,6 @@ export const VecLite = class {
         console.log('retrying load()');
         await new Promise((r) => setTimeout(r, 1e3 + 1e3 * retries));
         return await this.load(retries + 1);
-      } else if (retries === 3) {
-        const embeddings_2_file_path = this.folder_path + '/embeddings-2.json';
-        const embeddings_2_file_exists = await this.file_exists(
-          embeddings_2_file_path,
-        );
-        if (embeddings_2_file_exists) {
-          await this.migrate_embeddings_v2_to_v3();
-          return await this.load(retries + 1);
-        }
       }
       console.log(
         'failed to load embeddings file, prompt user to initiate bulk embed',
@@ -85,33 +134,7 @@ export const VecLite = class {
       return false;
     }
   }
-  async migrate_embeddings_v2_to_v3() {
-    console.log('migrating embeddings-2.json to embeddings-3.json');
-    const embeddings_2_file_path = this.folder_path + '/embeddings-2.json';
-    const embeddings_2_file = await this.read_file(embeddings_2_file_path);
-    const embeddings_2 = JSON.parse(embeddings_2_file);
-    const embeddings_3 = {};
-    for (const [key, value] of Object.entries(embeddings_2)) {
-      const new_obj = {
-        vec: value.vec,
-        meta: {},
-      };
-      const meta = value.meta;
-      const new_meta = {};
-      if (meta.hash) new_meta.hash = meta.hash;
-      if (meta.file) new_meta.parent = meta.file;
-      if (meta.blocks) new_meta.children = meta.blocks;
-      if (meta.mtime) new_meta.mtime = meta.mtime;
-      if (meta.size) new_meta.size = meta.size;
-      if (meta.len) new_meta.size = meta.len;
-      if (meta.path) new_meta.path = meta.path;
-      new_meta.src = 'file';
-      new_obj.meta = new_meta;
-      embeddings_3[key] = new_obj;
-    }
-    const embeddings_3_file = JSON.stringify(embeddings_3);
-    await this.write_file(this.file_path, embeddings_3_file);
-  }
+
   async init_embeddings_file() {
     if (!(await this.file_exists(this.folder_path))) {
       await this.mkdir(this.folder_path);
@@ -126,7 +149,8 @@ export const VecLite = class {
       console.log('embeddings file already exists: ' + this.file_path);
     }
   }
-  async save() {
+
+  async save(): Promise<boolean> {
     const embeddings = JSON.stringify(this.embeddings);
     const embeddings_file_exists = await this.file_exists(this.file_path);
     if (embeddings_file_exists) {
@@ -160,7 +184,8 @@ export const VecLite = class {
     }
     return true;
   }
-  cos_sim(vector1, vector2) {
+
+  cos_sim(vector1: number[], vector2: number[]): number {
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;
@@ -175,7 +200,7 @@ export const VecLite = class {
       return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
     }
   }
-  nearest(to_vec, filter = {}) {
+  find_nearest(to_vec: number[], filter: NearestFilter = {}): NearestResult[] {
     filter = {
       results_count: 30,
       ...filter,
@@ -220,63 +245,8 @@ export const VecLite = class {
     nearest = nearest.slice(0, filter.results_count);
     return nearest;
   }
-  find_nearest_embeddings(to_vec, filter = {}) {
-    const default_filter = {
-      max: this.max_sources,
-    };
-    filter = { ...default_filter, ...filter };
-    if (Array.isArray(to_vec) && to_vec.length !== this.vec_len) {
-      this.nearest = {};
-      for (let i = 0; i < to_vec.length; i++) {
-        this.find_nearest_embeddings(to_vec[i], {
-          max: Math.floor(filter.max / to_vec.length),
-        });
-      }
-    } else {
-      const from_keys = Object.keys(this.embeddings);
-      for (let i = 0; i < from_keys.length; i++) {
-        if (this.validate_type(this.embeddings[from_keys[i]])) continue;
-        const sim = this.computeCosineSimilarity(
-          to_vec,
-          this.embeddings[from_keys[i]].vec,
-        );
-        if (this.nearest[from_keys[i]]) {
-          this.nearest[from_keys[i]] += sim;
-        } else {
-          this.nearest[from_keys[i]] = sim;
-        }
-      }
-    }
-    let nearest = Object.keys(this.nearest).map((key) => {
-      return {
-        key,
-        similarity: this.nearest[key],
-      };
-    });
-    nearest = this.sort_by_similarity(nearest);
-    nearest = nearest.slice(0, filter.max);
-    nearest = nearest.map((item) => {
-      return {
-        link: this.embeddings[item.key].meta.path,
-        similarity: item.similarity,
-        len:
-          this.embeddings[item.key].meta.len ||
-          this.embeddings[item.key].meta.size,
-      };
-    });
-    return nearest;
-  }
-  sort_by_similarity(nearest) {
-    return nearest.sort(function (a, b) {
-      const a_score = a.similarity;
-      const b_score = b.similarity;
-      if (a_score > b_score) return -1;
-      if (a_score < b_score) return 1;
-      return 0;
-    });
-  }
   // check if key from embeddings exists in files
-  clean_up_embeddings(files) {
+  clean_up_embeddings(files: { path: string }[]): CleanupResult {
     console.log('cleaning up embeddings');
     const keys = Object.keys(this.embeddings);
     let deleted_embeddings = 0;
@@ -311,58 +281,58 @@ export const VecLite = class {
     }
     return { deleted_embeddings, total_embeddings: keys.length };
   }
-  get(key) {
+  get(key: string): Embedding | null {
     return this.embeddings[key] || null;
   }
-  get_meta(key) {
+  get_meta(key: string): Embedding['meta'] | null {
     const embedding = this.get(key);
     if (embedding && embedding.meta) {
       return embedding.meta;
     }
     return null;
   }
-  get_mtime(key) {
+  get_mtime(key: string): number | null {
     const meta = this.get_meta(key);
     if (meta && meta.mtime) {
       return meta.mtime;
     }
     return null;
   }
-  get_hash(key) {
+  get_hash(key: string): string | null {
     const meta = this.get_meta(key);
     if (meta && meta.hash) {
       return meta.hash;
     }
     return null;
   }
-  get_size(key) {
+  get_size(key: string): number | null {
     const meta = this.get_meta(key);
     if (meta && meta.size) {
       return meta.size;
     }
     return null;
   }
-  get_children(key) {
+  get_children(key: string): string[] | null {
     const meta = this.get_meta(key);
     if (meta && meta.children) {
       return meta.children;
     }
     return null;
   }
-  get_vec(key) {
+  get_vec(key: string): number[] | null {
     const embedding = this.get(key);
     if (embedding && embedding.vec) {
       return embedding.vec;
     }
     return null;
   }
-  save_embedding(key, vec, meta) {
+  save_embedding(key: string, vec: number[], meta: Embedding['meta']): void {
     this.embeddings[key] = {
       vec,
       meta,
     };
   }
-  mtime_is_current(key, source_mtime) {
+  mtime_is_current(key: string, source_mtime: number): boolean {
     const mtime = this.get_mtime(key);
     if (mtime && mtime >= source_mtime) {
       return true;
@@ -379,4 +349,4 @@ export const VecLite = class {
     );
     await this.init_embeddings_file();
   }
-};
+}

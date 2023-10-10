@@ -1,5 +1,6 @@
 import * as Obsidian from 'obsidian';
-import SmartConnectionsPlugin from 'src';
+import type SmartConnectionsPlugin from 'src';
+import { SMART_TRANSLATION } from 'src/constants';
 
 export const SMART_CONNECTIONS_CHAT_VIEW_TYPE = 'smart-connections-chat-view';
 

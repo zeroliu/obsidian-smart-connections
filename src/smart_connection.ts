@@ -1,120 +1,104 @@
 import * as Obsidian from 'obsidian';
-import SmartConnectionsPlugin from 'src';
+import type SmartConnectionsPlugin from 'src';
 import { SUPPORTED_FILE_TYPES } from 'src/constants';
 
 export const SMART_CONNECTIONS_VIEW_TYPE = 'smart-connections-view';
 export class SmartConnectionsView extends Obsidian.ItemView {
+  private nearest: any = null;
+  private load_wait: any = null;
+  private search_timeout: any = null;
+  private interval: any = null;
+  private interval_count: number = 0;
+  private rendering: boolean = false;
+  private file: any = null;
+  private api: SmartConnectionsViewApi;
+
   constructor(
     leaf: Obsidian.WorkspaceLeaf,
     private plugin: SmartConnectionsPlugin,
   ) {
     super(leaf);
-    this.nearest = null;
-    this.load_wait = null;
   }
-  getViewType() {
+
+  getViewType(): string {
     return SMART_CONNECTIONS_VIEW_TYPE;
   }
 
-  getDisplayText() {
+  getDisplayText(): string {
     return 'Smart Connections Files';
   }
 
-  getIcon() {
+  getIcon(): string {
     return 'smart-connections';
   }
 
-  set_message(message) {
-    const container = this.containerEl.children[1];
-    // clear container
-    container.empty();
-    // initiate top bar
+  set_message(message: string | string[]): void {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.innerHTML = ''; // clear container
     this.initiate_top_bar(container);
-    // if mesage is an array, loop through and create a new p element for each message
     if (Array.isArray(message)) {
       for (let i = 0; i < message.length; i++) {
         container.createEl('p', { cls: 'sc_message', text: message[i] });
       }
     } else {
-      // create p element with message
       container.createEl('p', { cls: 'sc_message', text: message });
     }
   }
-  render_link_text(link, show_full_path = false) {
-    /**
-     * Begin internal links
-     */
-    // if show full path is false, remove file path
+
+  render_link_text(link: string, show_full_path: boolean = false): string {
     if (!show_full_path) {
-      link = link.split('/').pop();
+      link = link.split('/').pop() || link;
     }
-    // if contains '#'
     if (link.indexOf('#') > -1) {
-      // split at .md
-      link = link.split('.md');
-      // wrap first part in <small> and add line break
-      link[0] = `<small>${link[0]}</small><br>`;
-      // join back together
-      link = link.join('');
-      // replace '#' with ' » '
+      link = link.split('.md').join('');
       link = link.replace(/\#/g, ' » ');
     } else {
-      // remove '.md'
       link = link.replace('.md', '');
     }
     return link;
   }
 
-  set_nearest(nearest, nearest_context = null, results_only = false) {
-    // get container element
-    const container = this.containerEl.children[1];
-    // if results only is false, clear container and initiate top bar
+  set_nearest(
+    nearest: any,
+    nearest_context: string | null = null,
+    results_only: boolean = false,
+  ): void {
+    const container = this.containerEl.children[1] as HTMLElement;
     if (!results_only) {
-      // clear container
-      container.empty();
+      container.innerHTML = ''; // clear container
       this.initiate_top_bar(container, nearest_context);
     }
-    // update results
     this.plugin.update_results(container, nearest);
   }
 
-  initiate_top_bar(container, nearest_context = null) {
-    let top_bar;
-    // if top bar already exists, empty it
+  initiate_top_bar(
+    container: HTMLElement,
+    nearest_context: string | null = null,
+  ): void {
+    let top_bar: HTMLElement;
     if (
       container.children.length > 0 &&
       container.children[0].classList.contains('sc-top-bar')
     ) {
-      top_bar = container.children[0];
-      top_bar.empty();
+      top_bar = container.children[0] as HTMLElement;
+      top_bar.innerHTML = ''; // empty it
     } else {
-      // init container for top bar
       top_bar = container.createEl('div', { cls: 'sc-top-bar' });
     }
-    // if highlighted text is not null, create p element with highlighted text
     if (nearest_context) {
       top_bar.createEl('p', { cls: 'sc-context', text: nearest_context });
     }
-    // add chat button
     const chat_button = top_bar.createEl('button', { cls: 'sc-chat-button' });
-    // add icon to chat button
     Obsidian.setIcon(chat_button, 'message-square');
-    // add click listener to chat button
     chat_button.addEventListener('click', () => {
-      // open chat
       this.plugin.open_chat();
     });
-    // add search button
     const search_button = top_bar.createEl('button', {
       cls: 'sc-search-button',
     });
-    // add icon to search button
     Obsidian.setIcon(search_button, 'search');
-    // add click listener to search button
     search_button.addEventListener('click', () => {
-      // empty top bar
-      top_bar.empty();
-      // create input element
+      top_bar.innerHTML = ''; // empty top bar
       const search_container = top_bar.createEl('div', {
         cls: 'search-input-container',
       });
@@ -123,33 +107,19 @@ export class SmartConnectionsView extends Obsidian.ItemView {
         type: 'search',
         placeholder: 'Type to start search...',
       });
-      // focus input
       input.focus();
-      // add keydown listener to input
-      input.addEventListener('keydown', (event) => {
-        // if escape key is pressed
+      input.addEventListener('keydown', (event: KeyboardEvent) => {
         if (event.key === 'Escape') {
           this.clear_auto_searcher();
-          // clear top bar
           this.initiate_top_bar(container, nearest_context);
         }
       });
-
-      // add keyup listener to input
-      input.addEventListener('keyup', (event) => {
-        // if this.search_timeout is not null then clear it and set to null
+      input.addEventListener('keyup', (event: KeyboardEvent) => {
         this.clear_auto_searcher();
-        // get search term
         const search_term = input.value;
-        // if enter key is pressed
         if (event.key === 'Enter' && search_term !== '') {
           this.search(search_term);
-        }
-        // if any other key is pressed and input is not empty then wait 500ms and make_connections
-        else if (search_term !== '') {
-          // clear timeout
-          clearTimeout(this.search_timeout);
-          // set timeout
+        } else if (search_term !== '') {
           this.search_timeout = setTimeout(() => {
             this.search(search_term, true);
           }, 700);
@@ -158,76 +128,53 @@ export class SmartConnectionsView extends Obsidian.ItemView {
     });
   }
 
-  // render buttons: "create" and "retry" for loading embeddings.json file
-  render_embeddings_buttons() {
-    // get container element
-    const container = this.containerEl.children[1];
-    // clear container
-    container.empty();
-    // create heading that says "Embeddings file not found"
+  render_embeddings_buttons(): void {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.innerHTML = ''; // clear container
     container.createEl('h2', {
       cls: 'scHeading',
       text: 'Embeddings file not found',
     });
-    // create div for buttons
     const button_div = container.createEl('div', { cls: 'scButtonDiv' });
-    // create "create" button
     const create_button = button_div.createEl('button', {
       cls: 'scButton',
       text: 'Create embeddings.json',
     });
-    // note that creating embeddings.json file will trigger bulk embedding and may take a while
     button_div.createEl('p', {
       cls: 'scButtonNote',
       text: 'Warning: Creating embeddings.json file will trigger bulk embedding and may take a while',
     });
-    // create "retry" button
     const retry_button = button_div.createEl('button', {
       cls: 'scButton',
       text: 'Retry',
     });
-    // try to load embeddings.json file again
     button_div.createEl('p', {
       cls: 'scButtonNote',
       text: "If embeddings.json file already exists, click 'Retry' to load it",
     });
-
-    // add click event to "create" button
-    create_button.addEventListener('click', async (event) => {
-      // create embeddings.json file
+    create_button.addEventListener('click', async () => {
       await this.plugin.smart_vec_lite.init_embeddings_file();
-      // reload view
       await this.render_connections();
     });
-
-    // add click event to "retry" button
-    retry_button.addEventListener('click', async (event) => {
+    retry_button.addEventListener('click', async () => {
       console.log('retrying to load embeddings.json file');
-      // reload embeddings.json file
       await this.plugin.init_vecs();
-      // reload view
       await this.render_connections();
     });
   }
 
-  async onOpen() {
-    const container = this.containerEl.children[1];
-    container.empty();
-    // placeholder text
+  async onOpen(): Promise<void> {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.innerHTML = ''; // clear container
     container.createEl('p', {
       cls: 'scPlaceholder',
       text: 'Open a note to find connections.',
     });
-
-    // runs when file is opened
     this.plugin.registerEvent(
       this.app.workspace.on('file-open', (file) => {
-        // if no file is open, return
         if (!file) {
-          // console.log("no file open, returning");
           return;
         }
-        // return if file type is not supported
         if (SUPPORTED_FILE_TYPES.indexOf(file.extension) === -1) {
           return this.set_message([
             'File: ' + file.name,
@@ -236,7 +183,6 @@ export class SmartConnectionsView extends Obsidian.ItemView {
               ')',
           ]);
         }
-        // run render_connections after 1 second to allow for file to load
         if (this.load_wait) {
           clearTimeout(this.load_wait);
         }
@@ -246,23 +192,14 @@ export class SmartConnectionsView extends Obsidian.ItemView {
         }, 1000);
       }),
     );
-
     this.app.workspace.registerHoverLinkSource(SMART_CONNECTIONS_VIEW_TYPE, {
       display: 'Smart Connections Files',
       defaultMod: true,
     });
-    this.app.workspace.registerHoverLinkSource(
-      SMART_CONNECTIONS_CHAT_VIEW_TYPE,
-      {
-        display: 'Smart Chat Links',
-        defaultMod: true,
-      },
-    );
-
     this.app.workspace.onLayoutReady(this.initialize.bind(this));
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     this.set_message('Loading embeddings file...');
     const vecs_intiated = await this.plugin.init_vecs();
     if (vecs_intiated) {
@@ -271,27 +208,19 @@ export class SmartConnectionsView extends Obsidian.ItemView {
     } else {
       this.render_embeddings_buttons();
     }
-
-    /**
-     * EXPERIMENTAL
-     * - window-based API access
-     * - code-block rendering
-     */
     this.api = new SmartConnectionsViewApi(this.app, this.plugin, this);
-    // register API to global window object
     (window['SmartConnectionsViewApi'] = this.api) &&
       this.register(() => delete window['SmartConnectionsViewApi']);
   }
 
-  async onClose() {
+  async onClose(): Promise<void> {
     console.log('closing smart connections view');
     this.app.workspace.unregisterHoverLinkSource(SMART_CONNECTIONS_VIEW_TYPE);
     this.plugin.view = null;
   }
 
-  async render_connections(context = null) {
+  async render_connections(context: any = null): Promise<void> {
     console.log('rendering connections');
-    // if API key is not set then update view message
     if (!this.plugin.settings.api_key) {
       this.set_message(
         'An OpenAI API key is required to make Smart Connections',
@@ -301,36 +230,25 @@ export class SmartConnectionsView extends Obsidian.ItemView {
     if (!this.plugin.embeddings_loaded) {
       await this.plugin.init_vecs();
     }
-    // if embedding still not loaded, return
     if (!this.plugin.embeddings_loaded) {
       console.log('embeddings files still not loaded or yet to be created');
       this.render_embeddings_buttons();
       return;
     }
     this.set_message('Making Smart Connections...');
-    /**
-     * Begin highlighted-text-level search
-     */
     if (typeof context === 'string') {
       const highlighted_text = context;
-      // get embedding for highlighted text
       await this.search(highlighted_text);
-      return; // ends here if context is a string
+      return;
     }
-
-    /**
-     * Begin file-level search
-     */
     this.nearest = null;
     this.interval_count = 0;
     this.rendering = false;
     this.file = context;
-    // if this.interval is set then clear it
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // set interval to check if nearest is set
     this.interval = setInterval(() => {
       if (!this.rendering) {
         if (this.file instanceof Obsidian.TFile) {
@@ -371,20 +289,22 @@ export class SmartConnectionsView extends Obsidian.ItemView {
     }, 10);
   }
 
-  async render_note_connections(file) {
+  async render_note_connections(file: Obsidian.TFile): Promise<void> {
     this.nearest = await this.plugin.find_note_connections(file);
   }
 
-  clear_auto_searcher() {
+  clear_auto_searcher(): void {
     if (this.search_timeout) {
       clearTimeout(this.search_timeout);
       this.search_timeout = null;
     }
   }
 
-  async search(search_text, results_only = false) {
+  async search(
+    search_text: string,
+    results_only: boolean = false,
+  ): Promise<void> {
     const nearest = await this.plugin.api.search(search_text);
-    // render results in view with first 100 characters of search text
     const nearest_context = `Selection: "${
       search_text.length > 100
         ? search_text.substring(0, 100) + '...'
@@ -401,11 +321,11 @@ class SmartConnectionsViewApi {
     private view: SmartConnectionsView,
   ) {}
 
-  async search(search_text: string) {
+  async search(search_text: string): Promise<any> {
     return await this.plugin.api.search(search_text);
   }
-  // trigger reload of embeddings file
-  async reload_embeddings_file() {
+
+  async reload_embeddings_file(): Promise<void> {
     await this.plugin.init_vecs();
     await this.view.render_connections();
   }
