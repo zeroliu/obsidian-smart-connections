@@ -192,10 +192,6 @@ export class SmartConnectionsView extends Obsidian.ItemView {
         }, 1000);
       }),
     );
-    this.app.workspace.registerHoverLinkSource(SMART_CONNECTIONS_VIEW_TYPE, {
-      display: 'Smart Connections Files',
-      defaultMod: true,
-    });
     this.app.workspace.onLayoutReady(this.initialize.bind(this));
   }
 
@@ -215,7 +211,6 @@ export class SmartConnectionsView extends Obsidian.ItemView {
 
   async onClose(): Promise<void> {
     console.log('closing smart connections view');
-    this.app.workspace.unregisterHoverLinkSource(SMART_CONNECTIONS_VIEW_TYPE);
     this.plugin.view = null;
   }
 
