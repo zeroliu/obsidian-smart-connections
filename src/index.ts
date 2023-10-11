@@ -1,5 +1,5 @@
 import * as Obsidian from 'obsidian';
-import { VecLite } from './veclite';
+import { type NearestResult, VecLite } from './veclite';
 import {
   DEFAULT_SETTINGS,
   SMART_TRANSLATION,
@@ -14,29 +14,28 @@ import {
 import {
   SMART_CONNECTIONS_VIEW_TYPE,
   SmartConnectionsView,
-} from 'src/smart_connection';
+} from 'src/smart_connection_view';
+import * as crypto from 'crypto';
 
 let VERSION = '';
 
-// require built-in crypto module
-const crypto = require('crypto');
 // md5 hash using built in crypto module
 function md5(str: string) {
   return crypto.createHash('md5').update(str).digest('hex');
 }
 
 export default class SmartConnectionsPlugin extends Obsidian.Plugin {
-  smart_vec_lite: VecLite;
-  settings: SmartConnectionSettings;
-  api = null;
-  embeddings_loaded = false;
-  file_exclusions = [];
-  folders = [];
-  has_new_embeddings = false;
-  header_exclusions = [];
-  nearest_cache = {};
-  path_only = [];
-  render_log: Record<string, any> = {};
+  smartVecLite?: VecLite;
+  settings: SmartConnectionSettings = DEFAULT_SETTINGS;
+  api?: ScSearchApi;
+  embeddingsLoaded = false;
+  fileExclusions: string[] = [];
+  folders: string[] = [];
+  hasNewEmbeddings = false;
+  headerExclusions: string[] = [];
+  nearestCache: Record<string, NearestResult[]> = {};
+  pathOnly: string[] = [];
+  renderLog: Record<string, any> = {};
 
   retry_notice_timeout = null;
   save_timeout = null;
@@ -47,14 +46,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   // constructor
   constructor(app: Obsidian.App, manifest: Obsidian.PluginManifest) {
     super(app, manifest);
-    this.render_log.deleted_embeddings = 0;
-    this.render_log.exclusions_logs = {};
-    this.render_log.failed_embeddings = [];
-    this.render_log.files = [];
-    this.render_log.new_embeddings = 0;
-    this.render_log.skipped_low_delta = {};
-    this.render_log.token_usage = 0;
-    this.render_log.tokens_saved_by_cache = 0;
+    this.renderLog.deleted_embeddings = 0;
+    this.renderLog.exclusions_logs = {};
+    this.renderLog.failed_embeddings = [];
+    this.renderLog.files = [];
+    this.renderLog.new_embeddings = 0;
+    this.renderLog.skipped_low_delta = {};
+    this.renderLog.token_usage = 0;
+    this.renderLog.tokens_saved_by_cache = 0;
   }
 
   async onload() {
@@ -62,11 +61,19 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     this.app.workspace.onLayoutReady(() => this.initialize());
   }
   onunload() {
-    this.output_render_log();
+    this.outputRenderLog();
     console.log('unloading plugin');
     this.app.workspace.detachLeavesOfType(SMART_CONNECTIONS_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(SMART_CONNECTIONS_CHAT_VIEW_TYPE);
   }
+
+  resetConnections() {
+    // clear nearest_cache on manual call to make connections
+    this.nearestCache = {};
+    // console.log("Cleared nearest_cache");
+    this.make_connections();
+  }
+
   async initialize() {
     console.log('Loading Smart Connections plugin');
     VERSION = this.manifest.version;
@@ -83,7 +90,6 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       name: 'Find: Make Smart Connections',
       icon: 'pencil_icon',
       hotkeys: [],
-      // editorCallback: async (editor) => {
       editorCallback: async (editor) => {
         if (editor.somethingSelected()) {
           // get selected text
@@ -91,10 +97,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
           // render connections from selected text
           await this.make_connections(selected_text);
         } else {
-          // clear nearest_cache on manual call to make connections
-          this.nearest_cache = {};
-          // console.log("Cleared nearest_cache");
-          await this.make_connections();
+          await this.resetConnections();
         }
       },
     });
@@ -102,7 +105,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       id: 'smart-connections-view',
       name: 'Open: View Smart Connections',
       callback: () => {
-        this.open_view();
+        this.openView();
       },
     });
     // open chat command
@@ -110,7 +113,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       id: 'smart-connections-chat',
       name: 'Open: Smart Chat Conversation',
       callback: () => {
-        this.open_chat();
+        this.openChat();
       },
     });
     // open random note from nearest cache
@@ -123,15 +126,15 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     });
     // add settings tab
     this.addSettingTab(new SmartConnectionsSettingsTab(this.app, this));
-    // register main view type
-    this.registerView(
-      SMART_CONNECTIONS_VIEW_TYPE,
-      (leaf) => new SmartConnectionsView(leaf, this),
-    );
     // register chat view type
     this.registerView(
       SMART_CONNECTIONS_CHAT_VIEW_TYPE,
       (leaf) => new SmartConnectionsChatView(leaf, this),
+    );
+    // register main view type
+    this.registerView(
+      SMART_CONNECTIONS_VIEW_TYPE,
+      (leaf) => new SmartConnectionsView(leaf, this),
     );
     // code-block renderer
     this.registerMarkdownCodeBlockProcessor(
@@ -139,13 +142,11 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       this.render_code_block.bind(this),
     );
 
-    // if this settings.view_open is true, open view on startup
-    if (this.settings.view_open) {
-      this.open_view();
-    }
-    // if this settings.chat_open is true, open chat on startup
     if (this.settings.chat_open) {
-      this.open_chat();
+      this.openChat();
+    }
+    if (this.settings.view_open) {
+      this.openView();
     }
     // on new version
     if (this.settings.version !== VERSION) {
@@ -154,7 +155,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       // save settings
       await this.saveSettings();
       // open view
-      this.open_view();
+      this.openView();
     }
     // check github release endpoint if update is available
     this.add_to_gitignore();
@@ -164,13 +165,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
      * - code-block rendering
      */
     this.api = new ScSearchApi(this.app, this);
-    // register API to global window object
-    (window['SmartSearchApi'] = this.api) &&
-      this.register(() => delete window['SmartSearchApi']);
   }
 
-  async init_vecs() {
-    this.smart_vec_lite = new VecLite({
+  async initVecs() {
+    this.smartVecLite = new VecLite({
       folder_path: '.smart-connections',
       exists_adapter: this.app.vault.adapter.exists.bind(
         this.app.vault.adapter,
@@ -183,8 +181,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       stat_adapter: this.app.vault.adapter.stat.bind(this.app.vault.adapter),
       write_adapter: this.app.vault.adapter.write.bind(this.app.vault.adapter),
     });
-    this.embeddings_loaded = await this.smart_vec_lite.load();
-    return this.embeddings_loaded;
+    this.embeddingsLoaded = await this.smartVecLite.load();
+    return this.embeddingsLoaded;
   }
 
   async loadSettings() {
@@ -195,7 +193,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       this.settings.file_exclusions.length > 0
     ) {
       // split file exclusions into array and trim whitespace
-      this.file_exclusions = this.settings.file_exclusions
+      this.fileExclusions = this.settings.file_exclusions
         .split(',')
         .map((file) => {
           return file.trim();
@@ -207,7 +205,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       this.settings.folder_exclusions.length > 0
     ) {
       // add slash to end of folder name if not present
-      const folder_exclusions = this.settings.folder_exclusions
+      const folderExclusions = this.settings.folder_exclusions
         .split(',')
         .map((folder) => {
           // trim whitespace
@@ -219,14 +217,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
           }
         });
       // merge folder exclusions with file exclusions
-      this.file_exclusions = this.file_exclusions.concat(folder_exclusions);
+      this.fileExclusions = this.fileExclusions.concat(folderExclusions);
     }
     // load header exclusions if not blank
     if (
       this.settings.header_exclusions &&
       this.settings.header_exclusions.length > 0
     ) {
-      this.header_exclusions = this.settings.header_exclusions
+      this.headerExclusions = this.settings.header_exclusions
         .split(',')
         .map((header) => {
           return header.trim();
@@ -234,7 +232,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
     // load path_only if not blank
     if (this.settings.path_only && this.settings.path_only.length > 0) {
-      this.path_only = this.settings.path_only.split(',').map((path) => {
+      this.pathOnly = this.settings.path_only.split(',').map((path) => {
         return path.trim();
       });
     }
@@ -252,7 +250,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     await this.loadSettings();
     // re-render view if set to true (for example, after adding API key)
     if (rerender) {
-      this.nearest_cache = {};
+      this.nearestCache = {};
       await this.make_connections();
     }
   }
@@ -294,10 +292,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       // use ctx to get file
       console.log(ctx);
       const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
-      nearest = await this.find_note_connections(file);
+      nearest = await this.findNoteConnections(file);
     }
     if (nearest.length) {
-      this.update_results(container, nearest);
+      this.updateResults(container, nearest);
     }
   }
 
@@ -305,10 +303,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     let view = this.get_view();
     if (!view) {
       // open view if not open
-      await this.open_view();
+      await this.openView();
       view = this.get_view();
     }
-    await view.render_connections(selected_text);
+    await view.renderConnections(selected_text);
   }
 
   addIcon() {
@@ -326,10 +324,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
 
   // open random note
   async open_random_note() {
-    const curr_file = this.app.workspace.getActiveFile();
-    const curr_key = md5(curr_file.path);
+    const currFile = this.app.workspace.getActiveFile();
+    if (!currFile) {
+      return;
+    }
+
+    const currKey = md5(currFile.path);
     // if no nearest cache, create Obsidian notice
-    if (typeof this.nearest_cache[curr_key] === 'undefined') {
+    if (typeof this.nearestCache[currKey] === 'undefined') {
       new Obsidian.Notice(
         '[Smart Connections] No Smart Connections found. Open a note to get Smart Connections.',
       );
@@ -337,14 +339,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
     // get random from nearest cache
     const rand = Math.floor(
-      (Math.random() * this.nearest_cache[curr_key].length) / 2,
+      (Math.random() * this.nearestCache[currKey].length) / 2,
     ); // divide by 2 to limit to top half of results
-    const random_file = this.nearest_cache[curr_key][rand];
+    const random_file = this.nearestCache[currKey][rand];
     // open random file
     this.open_note(random_file);
   }
 
-  async open_view() {
+  async openView() {
     if (this.get_view()) {
       console.log('Smart Connections view already open');
       return;
@@ -369,18 +371,18 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
   }
   // open chat view
-  async open_chat(retries = 0) {
-    if (!this.embeddings_loaded) {
+  async openChat(retries = 0) {
+    if (!this.embeddingsLoaded) {
       console.log('embeddings not loaded yet');
       if (retries < 3) {
         // wait and try again
         setTimeout(() => {
-          this.open_chat(retries + 1);
+          this.openChat(retries + 1);
         }, 1000 * (retries + 1));
         return;
       }
       console.log('embeddings still not loaded, opening smart view');
-      this.open_view();
+      this.openView();
       return;
     }
     this.app.workspace.detachLeavesOfType(SMART_CONNECTIONS_CHAT_VIEW_TYPE);
@@ -406,11 +408,11 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     const open_files = this.app.workspace
       .getLeavesOfType('markdown')
       .map((leaf) => leaf.view.file);
-    const clean_up_log = this.smart_vec_lite.clean_up_embeddings(files);
+    const clean_up_log = this.smartVecLite.clean_up_embeddings(files);
     if (this.settings.log_render) {
-      this.render_log.total_files = files.length;
-      this.render_log.deleted_embeddings = clean_up_log.deleted_embeddings;
-      this.render_log.total_embeddings = clean_up_log.total_embeddings;
+      this.renderLog.total_files = files.length;
+      this.renderLog.deleted_embeddings = clean_up_log.deleted_embeddings;
+      this.renderLog.total_embeddings = clean_up_log.total_embeddings;
     }
     // batch embeddings
     let batch_promises = [];
@@ -423,7 +425,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }
       // skip if file already has embedding and embedding.mtime is greater than or equal to file.mtime
       if (
-        this.smart_vec_lite.mtime_is_current(
+        this.smartVecLite.mtime_is_current(
           md5(files[i].path),
           files[i].stat.mtime,
         )
@@ -455,10 +457,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }
       // skip files where path contains any exclusions
       let skip = false;
-      for (let j = 0; j < this.file_exclusions.length; j++) {
-        if (files[i].path.indexOf(this.file_exclusions[j]) > -1) {
+      for (let j = 0; j < this.fileExclusions.length; j++) {
+        if (files[i].path.indexOf(this.fileExclusions[j]) > -1) {
           skip = true;
-          this.log_exclusion(this.file_exclusions[j]);
+          this.log_exclusion(this.fileExclusions[j]);
           // break out of loop
           break;
         }
@@ -495,13 +497,13 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // write embeddings JSON to file
     await this.save_embeddings_to_file();
     // if render_log.failed_embeddings then update failed_embeddings.txt
-    if (this.render_log.failed_embeddings.length > 0) {
-      await this.save_failed_embeddings();
+    if (this.renderLog.failed_embeddings.length > 0) {
+      await this.saveFailedEmbeddings();
     }
   }
 
   async save_embeddings_to_file(force = false) {
-    if (!this.has_new_embeddings) {
+    if (!this.hasNewEmbeddings) {
       return;
     }
     // console.log("new embeddings, saving to file");
@@ -526,15 +528,15 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
 
     try {
       // use smart_vec_lite
-      await this.smart_vec_lite.save();
-      this.has_new_embeddings = false;
+      await this.smartVecLite.save();
+      this.hasNewEmbeddings = false;
     } catch (error) {
       console.log(error);
       new Obsidian.Notice('Smart Connections: ' + error.message);
     }
   }
   // save failed embeddings to file from render_log.failed_embeddings
-  async save_failed_embeddings() {
+  async saveFailedEmbeddings() {
     // write failed_embeddings to file one line per failed embedding
     let failed_embeddings = [];
     // if file already exists then read it
@@ -550,7 +552,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
     // merge failed_embeddings with render_log.failed_embeddings
     failed_embeddings = failed_embeddings.concat(
-      this.render_log.failed_embeddings,
+      this.renderLog.failed_embeddings,
     );
     // remove duplicates
     failed_embeddings = [...new Set(failed_embeddings)];
@@ -638,10 +640,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       'Smart Connections: embeddings file Force Refreshed, making new connections...',
     );
     // force refresh
-    await this.smart_vec_lite.force_refresh();
+    await this.smartVecLite.force_refresh();
     // trigger making new connections
     await this.get_all_embeddings();
-    this.output_render_log();
+    this.outputRenderLog();
     new Obsidian.Notice(
       'Smart Connections: embeddings file Force Refreshed, new connections made.',
     );
@@ -659,10 +661,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     file_embed_input = file_embed_input.replace(/\//g, ' > ');
     // embed on file.name/title only if path_only path matcher specified in settings
     let path_only = false;
-    for (let j = 0; j < this.path_only.length; j++) {
-      if (curr_file.path.indexOf(this.path_only[j]) > -1) {
+    for (let j = 0; j < this.pathOnly.length; j++) {
+      if (curr_file.path.indexOf(this.pathOnly[j]) > -1) {
         path_only = true;
-        console.log('title only file with matcher: ' + this.path_only[j]);
+        console.log('title only file with matcher: ' + this.pathOnly[j]);
         // break out of loop
         break;
       }
@@ -740,7 +742,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         // skip if length of block_embed_input same as length of embeddings[block_key].meta.size
         // TODO consider rounding to nearest 10 or 100 for fuzzy matching
         if (
-          this.smart_vec_lite.get_size(block_key) === block_embed_input.length
+          this.smartVecLite.get_size(block_key) === block_embed_input.length
         ) {
           // log skipping file
           // console.log("skipping block (len)");
@@ -749,7 +751,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         // add hash to blocks to prevent empty blocks triggering full-file embedding
         // skip if embeddings key already exists and block mtime is greater than or equal to file mtime
         if (
-          this.smart_vec_lite.mtime_is_current(block_key, curr_file.stat.mtime)
+          this.smartVecLite.mtime_is_current(block_key, curr_file.stat.mtime)
         ) {
           // log skipping file
           // console.log("skipping block (mtime)");
@@ -757,7 +759,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         }
         // skip if hash is present in embeddings and hash of block_embed_input is equal to hash in embeddings
         const block_hash = md5(block_embed_input.trim());
-        if (this.smart_vec_lite.get_hash(block_key) === block_hash) {
+        if (this.smartVecLite.get_hash(block_key) === block_hash) {
           // log skipping file
           // console.log("skipping block (hash)");
           continue;
@@ -848,7 +850,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // skip embedding full file if blocks is not empty and all hashes are present in embeddings
     // better than hashing file_embed_input because more resilient to inconsequential changes (whitespace between headings)
     const file_hash = md5(file_embed_input.trim());
-    const existing_hash = this.smart_vec_lite.get_hash(curr_file_key);
+    const existing_hash = this.smartVecLite.get_hash(curr_file_key);
     if (existing_hash && file_hash === existing_hash) {
       // console.log("skipping file (hash): " + curr_file.path);
       this.update_render_log(blocks, file_embed_input);
@@ -856,7 +858,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
 
     // if not already skipping and blocks are present
-    const existing_blocks = this.smart_vec_lite.get_children(curr_file_key);
+    const existing_blocks = this.smartVecLite.get_children(curr_file_key);
     let existing_has_all_blocks = true;
     if (
       existing_blocks &&
@@ -876,7 +878,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       // get current note file size
       const curr_file_size = curr_file.stat.size;
       // get file size from embeddings
-      const prev_file_size = this.smart_vec_lite.get_size(curr_file_key);
+      const prev_file_size = this.smartVecLite.get_size(curr_file_key);
       if (prev_file_size) {
         // if curr file size is less than 10% different from prev file size
         const file_delta_pct = Math.round(
@@ -885,7 +887,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         if (file_delta_pct < 10) {
           // skip embedding
           // console.log("skipping file (size) " + curr_file.path);
-          this.render_log.skipped_low_delta[curr_file.name] =
+          this.renderLog.skipped_low_delta[curr_file.name] =
             file_delta_pct + '%';
           this.update_render_log(blocks, file_embed_input);
           return;
@@ -915,10 +917,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   update_render_log(blocks, file_embed_input) {
     if (blocks.length > 0) {
       // multiply by 2 because implies we saved token spending on blocks(sections), too
-      this.render_log.tokens_saved_by_cache += file_embed_input.length / 2;
+      this.renderLog.tokens_saved_by_cache += file_embed_input.length / 2;
     } else {
       // calc tokens saved by cache: divide by 4 for token estimate
-      this.render_log.tokens_saved_by_cache += file_embed_input.length / 4;
+      this.renderLog.tokens_saved_by_cache += file_embed_input.length / 4;
     }
   }
 
@@ -936,26 +938,26 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     if (!requestResults) {
       console.log('failed embedding batch');
       // log failed file names to render_log
-      this.render_log.failed_embeddings = [
-        ...this.render_log.failed_embeddings,
+      this.renderLog.failed_embeddings = [
+        ...this.renderLog.failed_embeddings,
         ...req_batch.map((req) => req[2].path),
       ];
       return;
     }
     // if requestResults is not null
     if (requestResults) {
-      this.has_new_embeddings = true;
+      this.hasNewEmbeddings = true;
       // add embedding key to render_log
       if (this.settings.log_render) {
         if (this.settings.log_render_files) {
-          this.render_log.files = [
-            ...this.render_log.files,
+          this.renderLog.files = [
+            ...this.renderLog.files,
             ...req_batch.map((req) => req[2].path),
           ];
         }
-        this.render_log.new_embeddings += req_batch.length;
+        this.renderLog.new_embeddings += req_batch.length;
         // add token usage to render_log
-        this.render_log.token_usage += requestResults.usage.total_tokens;
+        this.renderLog.token_usage += requestResults.usage.total_tokens;
       }
       // console.log(requestResults.data.length);
       // loop through requestResults.data
@@ -965,7 +967,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         if (vec) {
           const key = req_batch[index][0];
           const meta = req_batch[index][2];
-          this.smart_vec_lite.save_embedding(key, vec, meta);
+          this.smartVecLite.save_embedding(key, vec, meta);
         }
       }
     }
@@ -1038,27 +1040,27 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
   }
 
-  output_render_log() {
+  outputRenderLog() {
     // if settings.log_render is true
     if (this.settings.log_render) {
-      if (this.render_log.new_embeddings === 0) {
+      if (this.renderLog.new_embeddings === 0) {
         return;
       } else {
         // pretty print this.render_log to console
-        console.log(JSON.stringify(this.render_log, null, 2));
+        console.log(JSON.stringify(this.renderLog, null, 2));
       }
     }
 
     // clear render_log
-    this.render_log = {};
-    this.render_log.deleted_embeddings = 0;
-    this.render_log.exclusions_logs = {};
-    this.render_log.failed_embeddings = [];
-    this.render_log.files = [];
-    this.render_log.new_embeddings = 0;
-    this.render_log.skipped_low_delta = {};
-    this.render_log.token_usage = 0;
-    this.render_log.tokens_saved_by_cache = 0;
+    this.renderLog = {};
+    this.renderLog.deleted_embeddings = 0;
+    this.renderLog.exclusions_logs = {};
+    this.renderLog.failed_embeddings = [];
+    this.renderLog.files = [];
+    this.renderLog.new_embeddings = 0;
+    this.renderLog.skipped_low_delta = {};
+    this.renderLog.token_usage = 0;
+    this.renderLog.tokens_saved_by_cache = 0;
   }
 
   /**
@@ -1068,20 +1070,20 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
    * redundant computations and has mechanisms to exclude certain files based on
    * their paths.
    */
-  async find_note_connections(current_note = null) {
+  async findNoteConnections(currentNote: Obsidian.TFile) {
     // md5 of current note path
-    const curr_key = md5(current_note.path);
+    const currentKey = md5(currentNote.path);
     // if in this.nearest_cache then set to nearest
     // else get nearest
     let nearest = [];
-    if (this.nearest_cache[curr_key]) {
-      nearest = this.nearest_cache[curr_key];
+    if (this.nearestCache[currentKey]) {
+      nearest = this.nearestCache[currentKey];
       // console.log("nearest from cache");
     } else {
       // skip files where path contains any exclusions
-      for (let j = 0; j < this.file_exclusions.length; j++) {
-        if (current_note.path.indexOf(this.file_exclusions[j]) > -1) {
-          this.log_exclusion(this.file_exclusions[j]);
+      for (let j = 0; j < this.fileExclusions.length; j++) {
+        if (currentNote.path.indexOf(this.fileExclusions[j]) > -1) {
+          this.log_exclusion(this.fileExclusions[j]);
           // break out of loop and finish here
           return 'excluded';
         }
@@ -1094,28 +1096,28 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }, 3000);
       // get from cache if mtime is same and values are not empty
       if (
-        this.smart_vec_lite.mtime_is_current(curr_key, current_note.stat.mtime)
+        this.smartVecLite.mtime_is_current(currentKey, currentNote.stat.mtime)
       ) {
         // skipping get file embeddings because nothing has changed
         // console.log("find_note_connections - skipping file (mtime)");
       } else {
         // get file embeddings
-        await this.get_file_embeddings(current_note);
+        await this.get_file_embeddings(currentNote);
       }
       // get current note embedding vector
-      const vec = this.smart_vec_lite.get_vec(curr_key);
+      const vec = this.smartVecLite.get_vec(currentKey);
       if (!vec) {
-        return 'Error getting embeddings for: ' + current_note.path;
+        return 'Error getting embeddings for: ' + currentNote.path;
       }
 
       // compute cosine similarity between current note and all other notes via embeddings
-      nearest = this.smart_vec_lite.find_nearest(vec, {
-        skip_key: curr_key,
+      nearest = this.smartVecLite.find_nearest(vec, {
+        skip_key: currentKey,
         skip_sections: this.settings.skip_sections,
       });
 
       // save to this.nearest_cache
-      this.nearest_cache[curr_key] = nearest;
+      this.nearestCache[currentKey] = nearest;
     }
 
     // return array sorted by cosine similarity
@@ -1125,8 +1127,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   // create render_log object of exlusions with number of times skipped as value
   log_exclusion(exclusion) {
     // increment render_log for skipped file
-    this.render_log.exclusions_logs[exclusion] =
-      (this.render_log.exclusions_logs[exclusion] || 0) + 1;
+    this.renderLog.exclusions_logs[exclusion] =
+      (this.renderLog.exclusions_logs[exclusion] || 0) + 1;
   }
 
   block_parser(markdown, file_path) {
@@ -1477,11 +1479,11 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   // iterate through blocks and skip if block_headings contains this.header_exclusions
   validate_headings(block_headings) {
     let valid = true;
-    if (this.header_exclusions.length > 0) {
-      for (let k = 0; k < this.header_exclusions.length; k++) {
-        if (block_headings.indexOf(this.header_exclusions[k]) > -1) {
+    if (this.headerExclusions.length > 0) {
+      for (let k = 0; k < this.headerExclusions.length; k++) {
+        if (block_headings.indexOf(this.headerExclusions[k]) > -1) {
           valid = false;
-          this.log_exclusion('heading: ' + this.header_exclusions[k]);
+          this.log_exclusion('heading: ' + this.headerExclusions[k]);
           break;
         }
       }
@@ -1530,7 +1532,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   }
 
   // create list of nearest notes
-  async update_results(container, nearest) {
+  async updateResults(container, nearest) {
     let list;
     // check if list exists
     if (
@@ -1950,22 +1952,20 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   // get all folders
   async get_all_folders() {
     if (!this.folders || this.folders.length === 0) {
-      this.folders = await this.get_folders();
+      this.folders = await this.getFolders();
     }
     return this.folders;
   }
   // get folders, traverse non-hidden sub-folders
-  async get_folders(path = '/') {
+  async getFolders(path = '/') {
     let folders = (await this.app.vault.adapter.list(path)).folders;
-    let folder_list = [];
+    let folderList: string[] = [];
     for (let i = 0; i < folders.length; i++) {
       if (folders[i].startsWith('.')) continue;
-      folder_list.push(folders[i]);
-      folder_list = folder_list.concat(
-        await this.get_folders(folders[i] + '/'),
-      );
+      folderList.push(folders[i]);
+      folderList = folderList.concat(await this.getFolders(folders[i] + '/'));
     }
-    return folder_list;
+    return folderList;
   }
 
   async sync_notes() {
@@ -1980,8 +1980,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // get all files in vault
     const files = this.app.vault.getMarkdownFiles().filter((file) => {
       // filter out file paths matching any strings in this.file_exclusions
-      for (let i = 0; i < this.file_exclusions.length; i++) {
-        if (file.path.indexOf(this.file_exclusions[i]) > -1) {
+      for (let i = 0; i < this.fileExclusions.length; i++) {
+        if (file.path.indexOf(this.fileExclusions[i]) > -1) {
           return false;
         }
       }

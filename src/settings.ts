@@ -1,5 +1,6 @@
 import * as Obsidian from 'obsidian';
 import SmartConnectionsPlugin from 'src';
+import { SMART_TRANSLATION } from 'src/constants';
 
 export class SmartConnectionsSettingsTab extends Obsidian.PluginSettingTab {
   plugin: SmartConnectionsPlugin;

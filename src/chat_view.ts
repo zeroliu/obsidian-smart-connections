@@ -175,7 +175,7 @@ export class SmartConnectionsChatView extends Obsidian.ItemView {
   }
 
   open_smart_view() {
-    this.plugin.open_view();
+    this.plugin.openView();
   }
   // render chat messages container
   render_chat_box() {

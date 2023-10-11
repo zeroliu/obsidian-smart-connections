@@ -32,7 +32,7 @@ interface NearestFilter {
   path_begins_with?: string | string[];
 }
 
-interface NearestResult {
+export interface NearestResult {
   link: string;
   similarity: number;
   size: number;
@@ -135,7 +135,7 @@ export class VecLite {
     }
   }
 
-  async init_embeddings_file() {
+  async initEmbeddingsFile() {
     if (!(await this.file_exists(this.folder_path))) {
       await this.mkdir(this.folder_path);
       console.log('created folder: ' + this.folder_path);
@@ -179,7 +179,7 @@ export class VecLite {
         );
       }
     } else {
-      await this.init_embeddings_file();
+      await this.initEmbeddingsFile();
       return await this.save();
     }
     return true;
@@ -347,6 +347,6 @@ export class VecLite {
       this.file_path,
       this.folder_path + '/embeddings-' + current_datetime + '.json',
     );
-    await this.init_embeddings_file();
+    await this.initEmbeddingsFile();
   }
 }
