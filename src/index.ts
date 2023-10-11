@@ -36,11 +36,10 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   nearestCache: Record<string, NearestResult[]> = {};
   pathOnly: string[] = [];
   renderLog: Record<string, any> = {};
+  recentlySentRetryNotice = false;
 
-  retry_notice_timeout = null;
-  save_timeout = null;
+  saveTimeout: ReturnType<typeof setTimeout> | null = null;
   sc_branding = {};
-  self_ref_kw_regex = null;
   update_available = false;
 
   // constructor
@@ -236,11 +235,6 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         return path.trim();
       });
     }
-    // load self_ref_kw_regex
-    this.self_ref_kw_regex = new RegExp(
-      `\\b(${SMART_TRANSLATION[this.settings.language].pronous.join('|')})\\b`,
-      'gi',
-    );
     // load failed files
     await this.load_failed_files();
   }
@@ -436,21 +430,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }
       // check if file is in failed_files
       if (this.settings.failed_files.indexOf(files[i].path) > -1) {
-        // log skipping file
-        // console.log("skipping previously failed file, use button in settings to retry");
-        // use setTimeout to prevent multiple notices
-        if (this.retry_notice_timeout) {
-          clearTimeout(this.retry_notice_timeout);
-          this.retry_notice_timeout = null;
-        }
         // limit to one notice every 10 minutes
-        if (!this.recently_sent_retry_notice) {
+        if (!this.recentlySentRetryNotice) {
           new Obsidian.Notice(
             'Smart Connections: Skipping previously failed file, use button in settings to retry',
           );
-          this.recently_sent_retry_notice = true;
+          this.recentlySentRetryNotice = true;
           setTimeout(() => {
-            this.recently_sent_retry_notice = false;
+            this.recentlySentRetryNotice = false;
           }, 600000);
         }
         continue;
@@ -509,17 +496,17 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // console.log("new embeddings, saving to file");
     if (!force) {
       // prevent excessive writes to embeddings file by waiting 1 minute before writing
-      if (this.save_timeout) {
-        clearTimeout(this.save_timeout);
-        this.save_timeout = null;
+      if (this.saveTimeout) {
+        clearTimeout(this.saveTimeout);
+        this.saveTimeout = null;
       }
-      this.save_timeout = setTimeout(() => {
+      this.saveTimeout = setTimeout(() => {
         // console.log("writing embeddings to file");
         this.save_embeddings_to_file(true);
         // clear timeout
-        if (this.save_timeout) {
-          clearTimeout(this.save_timeout);
-          this.save_timeout = null;
+        if (this.saveTimeout) {
+          clearTimeout(this.saveTimeout);
+          this.saveTimeout = null;
         }
       }, 30000);
       console.log('scheduled save');
