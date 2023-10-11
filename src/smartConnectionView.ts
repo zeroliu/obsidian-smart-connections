@@ -8,7 +8,7 @@ export class SmartConnectionsView extends Obsidian.ItemView {
   private loadTimeout: any = null;
   private searchTimeout: any = null;
   private interval: any = null;
-  private makeConnectionStartTime: number = null;
+  private makeConnectionStartTime: number | null = null;
   private rendering: boolean = false;
   private file: any = null;
 
@@ -146,7 +146,7 @@ export class SmartConnectionsView extends Obsidian.ItemView {
       text: "If embeddings.json file already exists, click 'Retry' to load it",
     });
     createButton.addEventListener('click', async () => {
-      await this.plugin.smartVecLite.initEmbeddingsFile();
+      await this.plugin.smartVecLite?.initEmbeddingsFile();
       await this.renderConnections();
     });
     retryButton.addEventListener('click', async () => {
@@ -290,7 +290,7 @@ export class SmartConnectionsView extends Obsidian.ItemView {
     searchText: string,
     resultsOnly: boolean = false,
   ): Promise<void> {
-    const nearest = await this.plugin.api.search(searchText);
+    const nearest = await this.plugin.api?.search(searchText);
     const nearestContext = `Selection: "${
       searchText.length > 100
         ? searchText.substring(0, 100) + '...'
