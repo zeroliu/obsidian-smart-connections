@@ -716,7 +716,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // get file contents
     const note_contents = await this.app.vault.cachedRead(currFile);
     let processedSinceLastSave = 0;
-    const note_sections = this.block_parser(note_contents, currFile.path);
+    const note_sections = this.blockParser(note_contents, currFile.path);
     // console.log(note_sections);
     // if note has more than one section (if only one then its same as full-content)
     if (note_sections.length > 1) {
@@ -1048,7 +1048,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       (this.renderLog.exclusions_logs[exclusion] || 0) + 1;
   }
 
-  block_parser(markdown, file_path) {
+  blockParser(markdown, file_path) {
     // if this.settings.skip_sections is true then return empty array
     if (this.settings.skip_sections) {
       return [];
