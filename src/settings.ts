@@ -97,7 +97,7 @@ export class SmartConnectionsSettingsTab extends Obsidian.PluginSettingTab {
       .addButton((button) =>
         button.setButtonText('Test API Key').onClick(async () => {
           // test API key
-          const resp = await this.plugin.test_api_key();
+          const resp = await this.plugin.testApiKey();
           if (resp) {
             new Obsidian.Notice('Smart Connections: API key is valid');
           } else {
@@ -336,7 +336,7 @@ export class SmartConnectionsSettingsTab extends Obsidian.PluginSettingTab {
           ) {
             // save
             try {
-              await this.plugin.save_embeddings_to_file(true);
+              await this.plugin.saveEmbeddingsToFile(true);
               manual_save_results.innerHTML = 'Embeddings saved successfully.';
             } catch (e) {
               manual_save_results.innerHTML =

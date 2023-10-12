@@ -8,7 +8,7 @@ export class SmartConnectionsView extends Obsidian.ItemView {
   private loadTimeout: any = null;
   private searchTimeout: any = null;
   private interval: any = null;
-  private makeConnectionStartTime: number | null = null;
+  private makeConnectionStartTime = 0;
   private rendering: boolean = false;
   private file: any = null;
 

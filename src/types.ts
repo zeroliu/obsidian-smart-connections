@@ -16,4 +16,17 @@ export interface SmartConnectionSettings {
   smart_chat_model: string;
   view_open: boolean;
   version: string;
+  failed_files: string[];
 }
+
+export type EmbeddingRequest = [
+  string, // file key
+  string, // embed inputs
+  {
+    mtime: number;
+    path: string;
+    hash?: string;
+    parent?: string;
+    size?: number;
+  },
+];

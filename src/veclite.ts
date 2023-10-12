@@ -246,32 +246,35 @@ export class VecLite {
     return nearest;
   }
   // check if key from embeddings exists in files
-  clean_up_embeddings(files: { path: string }[]): CleanupResult {
+  cleanUpEmbeddings(files: { path: string }[]): CleanupResult {
     console.log('cleaning up embeddings');
     const keys = Object.keys(this.embeddings);
     let deleted_embeddings = 0;
     for (const key of keys) {
       const path = this.embeddings[key].meta.path;
-      if (!files.find((file) => path.startsWith(file.path))) {
+      if (!files.find((file) => path?.startsWith(file.path))) {
         delete this.embeddings[key];
         deleted_embeddings++;
         continue;
       }
-      if (path.indexOf('#') > -1) {
-        const parent_key = this.embeddings[key].meta.parent;
-        if (!this.embeddings[parent_key]) {
+      if (path && path.indexOf('#') > -1) {
+        const parentKey = this.embeddings[key].meta.parent;
+        if (!parentKey) {
+          continue;
+        }
+        if (!this.embeddings[parentKey]) {
           delete this.embeddings[key];
           deleted_embeddings++;
           continue;
         }
-        if (!this.embeddings[parent_key].meta) {
+        if (!this.embeddings[parentKey].meta) {
           delete this.embeddings[key];
           deleted_embeddings++;
           continue;
         }
         if (
-          this.embeddings[parent_key].meta.children &&
-          this.embeddings[parent_key].meta.children.indexOf(key) < 0
+          this.embeddings[parentKey].meta.children &&
+          this.embeddings[parentKey].meta.children!.indexOf(key) < 0
         ) {
           delete this.embeddings[key];
           deleted_embeddings++;
@@ -326,13 +329,13 @@ export class VecLite {
     }
     return null;
   }
-  save_embedding(key: string, vec: number[], meta: Embedding['meta']): void {
+  saveEmbedding(key: string, vec: number[], meta: Embedding['meta']): void {
     this.embeddings[key] = {
       vec,
       meta,
     };
   }
-  mtime_is_current(key: string, source_mtime: number): boolean {
+  mtimeIsCurrent(key: string, source_mtime: number): boolean {
     const mtime = this.get_mtime(key);
     if (mtime && mtime >= source_mtime) {
       return true;
