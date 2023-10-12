@@ -403,7 +403,7 @@ export class SmartConnectionsChatView extends Obsidian.ItemView {
 
   // check if includes keywords referring to one's own notes
   contains_self_referential_keywords(user_input) {
-    const matches = user_input.match(this.plugin.self_ref_kw_regex);
+    const matches = user_input.match(this.plugin.selfRefKeywordRegex);
     if (matches) return true;
     return false;
   }
@@ -716,10 +716,10 @@ export class SmartConnectionsChatView extends Obsidian.ItemView {
       }
     }
     // search for nearest based on hyd
-    let nearest = await this.plugin.api.search(hyd, filter);
-    console.log('nearest', nearest.length);
+    let nearest = await this.plugin.api?.search(hyd, filter);
+    console.log('nearest', nearest?.length);
     nearest = this.get_nearest_until_next_dev_exceeds_std_dev(nearest);
-    console.log('nearest after std dev slice', nearest.length);
+    console.log('nearest after std dev slice', nearest?.length);
     nearest = this.sort_by_len_adjusted_similarity(nearest);
 
     return await this.get_context_for_prompt(nearest);

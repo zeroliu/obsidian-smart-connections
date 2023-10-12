@@ -371,7 +371,7 @@ export class SmartConnectionsSettingsTab extends Obsidian.PluginSettingTab {
             )
           ) {
             // force refresh
-            await this.plugin.force_refresh_embeddings_file();
+            await this.plugin.forceRefreshEmbeddingsFile();
           }
         }),
       );

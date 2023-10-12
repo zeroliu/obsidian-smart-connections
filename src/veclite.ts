@@ -185,7 +185,7 @@ export class VecLite {
     return true;
   }
 
-  cos_sim(vector1: number[], vector2: number[]): number {
+  cosSim(vector1: number[], vector2: number[]): number {
     let dotProduct = 0;
     let normA = 0;
     let normB = 0;
@@ -200,27 +200,27 @@ export class VecLite {
       return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
     }
   }
-  find_nearest(to_vec: number[], filter: NearestFilter = {}): NearestResult[] {
+  findNearest(toVec: number[], filter: NearestFilter = {}): NearestResult[] {
     filter = {
       results_count: 30,
       ...filter,
     };
-    let nearest = [];
-    const from_keys = Object.keys(this.embeddings);
-    for (let i = 0; i < from_keys.length; i++) {
+    let nearest: NearestResult[] = [];
+    const fromKeys = Object.keys(this.embeddings);
+    for (let i = 0; i < fromKeys.length; i++) {
       if (filter.skip_sections) {
-        const from_path = this.embeddings[from_keys[i]].meta.path;
-        if (from_path.indexOf('#') > -1) continue;
+        const from_path = this.embeddings[fromKeys[i]].meta.path;
+        if (from_path && from_path.indexOf('#') > -1) continue;
       }
       if (filter.skip_key) {
-        if (filter.skip_key === from_keys[i]) continue;
-        if (filter.skip_key === this.embeddings[from_keys[i]].meta.parent)
+        if (filter.skip_key === fromKeys[i]) continue;
+        if (filter.skip_key === this.embeddings[fromKeys[i]].meta.parent)
           continue;
       }
       if (filter.path_begins_with) {
         if (
           typeof filter.path_begins_with === 'string' &&
-          !this.embeddings[from_keys[i]].meta.path.startsWith(
+          !this.embeddings[fromKeys[i]].meta.path?.startsWith(
             filter.path_begins_with,
           )
         )
@@ -228,15 +228,15 @@ export class VecLite {
         if (
           Array.isArray(filter.path_begins_with) &&
           !filter.path_begins_with.some((path) =>
-            this.embeddings[from_keys[i]].meta.path.startsWith(path),
+            this.embeddings[fromKeys[i]].meta.path?.startsWith(path),
           )
         )
           continue;
       }
       nearest.push({
-        link: this.embeddings[from_keys[i]].meta.path,
-        similarity: this.cos_sim(to_vec, this.embeddings[from_keys[i]].vec),
-        size: this.embeddings[from_keys[i]].meta.size,
+        link: this.embeddings[fromKeys[i]].meta.path ?? '',
+        similarity: this.cosSim(toVec, this.embeddings[fromKeys[i]].vec),
+        size: this.embeddings[fromKeys[i]].meta.size ?? 0,
       });
     }
     nearest.sort(function (a, b) {
@@ -301,28 +301,28 @@ export class VecLite {
     }
     return null;
   }
-  get_hash(key: string): string | null {
+  getHash(key: string): string | null {
     const meta = this.get_meta(key);
     if (meta && meta.hash) {
       return meta.hash;
     }
     return null;
   }
-  get_size(key: string): number | null {
+  getSize(key: string): number | null {
     const meta = this.get_meta(key);
     if (meta && meta.size) {
       return meta.size;
     }
     return null;
   }
-  get_children(key: string): string[] | null {
+  getChildren(key: string): string[] | null {
     const meta = this.get_meta(key);
     if (meta && meta.children) {
       return meta.children;
     }
     return null;
   }
-  get_vec(key: string): number[] | null {
+  getVec(key: string): number[] | null {
     const embedding = this.get(key);
     if (embedding && embedding.vec) {
       return embedding.vec;
@@ -342,7 +342,7 @@ export class VecLite {
     }
     return false;
   }
-  async force_refresh() {
+  async forceRefresh() {
     this.embeddings = null;
     this.embeddings = {};
     let current_datetime = Math.floor(Date.now() / 1e3);

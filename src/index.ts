@@ -3,6 +3,7 @@ import { type NearestResult, VecLite } from './veclite';
 import {
   DEFAULT_SETTINGS,
   MAX_EMBED_STRING_LENGTH,
+  SMART_TRANSLATION,
   SUPPORTED_FILE_TYPES,
 } from './constants';
 import { EmbeddingRequest, SmartConnectionSettings } from 'src/types';
@@ -29,6 +30,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   smartVecLite?: VecLite;
   settings: SmartConnectionSettings = DEFAULT_SETTINGS;
   api?: ScSearchApi;
+  selfRefKeywordRegex?: RegExp;
   embeddingsLoaded = false;
   fileExclusions: string[] = [];
   folders: string[] = [];
@@ -72,7 +74,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // clear nearest_cache on manual call to make connections
     this.nearestCache = {};
     // console.log("Cleared nearest_cache");
-    this.make_connections();
+    this.makeConnections();
   }
 
   async initialize() {
@@ -96,7 +98,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
           // get selected text
           let selected_text = editor.getSelection();
           // render connections from selected text
-          await this.make_connections(selected_text);
+          await this.makeConnections(selected_text);
         } else {
           await this.resetConnections();
         }
@@ -237,6 +239,12 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         return path.trim();
       });
     }
+
+    this.selfRefKeywordRegex = new RegExp(
+      `\\b(${SMART_TRANSLATION[this.settings.language].pronous.join('|')})\\b`,
+      'gi',
+    );
+
     // load failed files
     await this.load_failed_files();
   }
@@ -247,7 +255,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // re-render view if set to true (for example, after adding API key)
     if (rerender) {
       this.nearestCache = {};
-      await this.make_connections();
+      await this.makeConnections();
     }
   }
 
@@ -295,14 +303,14 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
   }
 
-  async make_connections(selected_text = null) {
-    let view = this.get_view();
+  async makeConnections(selectedText?: string) {
+    let view = this.getConnectionsView();
     if (!view) {
       // open view if not open
       await this.openView();
-      view = this.get_view();
+      view = this.getConnectionsView();
     }
-    await view.renderConnections(selected_text);
+    await view?.renderConnections(selectedText);
   }
 
   addIcon() {
@@ -343,7 +351,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   }
 
   async openView() {
-    if (this.get_view()) {
+    if (this.getConnectionsView()) {
       console.log('Smart Connections view already open');
       return;
     }
@@ -357,7 +365,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     );
   }
   // source: https://github.com/obsidianmd/obsidian-releases/blob/master/plugin-review.md#avoid-managing-references-to-custom-views
-  get_view() {
+  getConnectionsView() {
     for (let leaf of this.app.workspace.getLeavesOfType(
       SMART_CONNECTIONS_VIEW_TYPE,
     )) {
@@ -518,12 +526,13 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
 
     try {
-      // use smart_vec_lite
-      await this.smartVecLite.save();
+      await this.smartVecLite?.save();
       this.hasNewEmbeddings = false;
-    } catch (error) {
+    } catch (error: unknown) {
       console.log(error);
-      new Obsidian.Notice('Smart Connections: ' + error.message);
+      if (error instanceof Error) {
+        new Obsidian.Notice('Smart Connections: ' + error.message);
+      }
     }
   }
   // save failed embeddings to file from render_log.failed_embeddings
@@ -626,13 +635,11 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
   }
 
   // force refresh embeddings file but first rename existing embeddings file to .smart-connections/embeddings-YYYY-MM-DD.json
-  async force_refresh_embeddings_file() {
+  async forceRefreshEmbeddingsFile() {
     new Obsidian.Notice(
       'Smart Connections: embeddings file Force Refreshed, making new connections...',
     );
-    // force refresh
-    await this.smartVecLite.force_refresh();
-    // trigger making new connections
+    await this.smartVecLite?.forceRefresh();
     await this.getAllEmbeddings();
     this.outputRenderLog();
     new Obsidian.Notice(
@@ -697,7 +704,6 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
           }
         }
       }
-      // console.log(file_embed_input);
       reqBatch.push([
         currFileKey,
         fileEmbedInput,
@@ -713,56 +719,43 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     /**
      * BEGIN Block "section" embedding
      */
-    // get file contents
-    const note_contents = await this.app.vault.cachedRead(currFile);
+    const noteContent = await this.app.vault.cachedRead(currFile);
     let processedSinceLastSave = 0;
-    const note_sections = this.blockParser(note_contents, currFile.path);
-    // console.log(note_sections);
+    const noteSections = this.blockParser(noteContent, currFile.path);
     // if note has more than one section (if only one then its same as full-content)
-    if (note_sections.length > 1) {
+    if (noteSections.length > 1) {
       // for each section in file
-      //console.log("Sections: " + note_sections.length);
-      for (let j = 0; j < note_sections.length; j++) {
+      for (let j = 0; j < noteSections.length; j++) {
         // get embed_input for block
-        const block_embed_input = note_sections[j].text;
-        // console.log(note_sections[j].path);
-        // get block key from block.path (contains both file.path and header path)
-        const block_key = md5(note_sections[j].path);
-        blocks.push(block_key);
-        // skip if length of block_embed_input same as length of embeddings[block_key].meta.size
+        const blockEmbedInput = noteSections[j].text;
+        const blockKey = md5(noteSections[j].path);
+        blocks.push(blockKey);
+        // Skip if length of block_embed_input same as length of embeddings[block_key].meta.size
         // TODO consider rounding to nearest 10 or 100 for fuzzy matching
-        if (
-          this.smartVecLite?.get_size(block_key) === block_embed_input.length
-        ) {
-          // log skipping file
-          // console.log("skipping block (len)");
+        if (this.smartVecLite?.getSize(blockKey) === blockEmbedInput.length) {
           continue;
         }
-        // add hash to blocks to prevent empty blocks triggering full-file embedding
+        // Add hash to blocks to prevent empty blocks triggering full-file embedding
         // skip if embeddings key already exists and block mtime is greater than or equal to file mtime
-        if (this.smartVecLite?.mtimeIsCurrent(block_key, currFile.stat.mtime)) {
-          // log skipping file
-          // console.log("skipping block (mtime)");
+        if (this.smartVecLite?.mtimeIsCurrent(blockKey, currFile.stat.mtime)) {
           continue;
         }
         // skip if hash is present in embeddings and hash of block_embed_input is equal to hash in embeddings
-        const block_hash = md5(block_embed_input.trim());
-        if (this.smartVecLite?.get_hash(block_key) === block_hash) {
-          // log skipping file
-          // console.log("skipping block (hash)");
+        const blockHash = md5(blockEmbedInput.trim());
+        if (this.smartVecLite?.getHash(blockKey) === blockHash) {
           continue;
         }
 
         // create req_batch for batching requests
         reqBatch.push([
-          block_key,
-          block_embed_input,
+          blockKey,
+          blockEmbedInput,
           {
             mtime: Date.now(),
-            hash: block_hash,
+            hash: blockHash,
             parent: currFileKey,
-            path: note_sections[j].path,
-            size: block_embed_input.length,
+            path: noteSections[j].path,
+            size: blockEmbedInput.length,
           },
         ]);
         if (reqBatch.length > 9) {
@@ -795,104 +788,94 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     /**
      * TODO: improve/refactor the following "large file reduce to headings" logic
      */
-    if (note_contents.length < MAX_EMBED_STRING_LENGTH) {
-      fileEmbedInput += note_contents;
+    if (noteContent.length < MAX_EMBED_STRING_LENGTH) {
+      fileEmbedInput += noteContent;
     } else {
-      const note_meta_cache = this.app.metadataCache.getFileCache(currFile);
+      const noteMetaCache = this.app.metadataCache.getFileCache(currFile);
       // for each heading in file
-      if (typeof note_meta_cache.headings === 'undefined') {
+      if (typeof noteMetaCache?.headings === 'undefined') {
         // console.log("no headings found, using first chunk of file instead");
-        fileEmbedInput += note_contents.substring(0, MAX_EMBED_STRING_LENGTH);
+        fileEmbedInput += noteContent.substring(0, MAX_EMBED_STRING_LENGTH);
       } else {
-        let note_headings = '';
-        for (let j = 0; j < note_meta_cache.headings.length; j++) {
+        let noteHeadings = '';
+        for (let j = 0; j < noteMetaCache.headings.length; j++) {
           // get heading level
-          const heading_level = note_meta_cache.headings[j].level;
+          const headingLevel = noteMetaCache.headings[j].level;
           // get heading text
-          const heading_text = note_meta_cache.headings[j].heading;
+          const headingText = noteMetaCache.headings[j].heading;
           // build markdown heading
-          let md_heading = '';
-          for (let k = 0; k < heading_level; k++) {
-            md_heading += '#';
+          let mdHeading = '';
+          for (let k = 0; k < headingLevel; k++) {
+            mdHeading += '#';
           }
           // add heading to note_headings
-          note_headings += `${md_heading} ${heading_text}\n`;
+          noteHeadings += `${mdHeading} ${headingText}\n`;
         }
-        //console.log(note_headings);
-        fileEmbedInput += note_headings;
+        fileEmbedInput += noteHeadings;
         if (fileEmbedInput.length > MAX_EMBED_STRING_LENGTH) {
           fileEmbedInput = fileEmbedInput.substring(0, MAX_EMBED_STRING_LENGTH);
         }
       }
     }
-    // skip embedding full file if blocks is not empty and all hashes are present in embeddings
-    // better than hashing file_embed_input because more resilient to inconsequential changes (whitespace between headings)
-    const file_hash = md5(fileEmbedInput.trim());
-    const existing_hash = this.smartVecLite.get_hash(currFileKey);
-    if (existing_hash && file_hash === existing_hash) {
-      // console.log("skipping file (hash): " + curr_file.path);
-      this.update_render_log(blocks, fileEmbedInput);
+    const fileHash = md5(fileEmbedInput.trim());
+    const existingHash = this.smartVecLite?.getHash(currFileKey);
+    if (existingHash && fileHash === existingHash) {
+      // skip embedding full file if blocks is not empty and all hashes are
+      // present in embeddings
+      // better than hashing file_embed_input because more resilient to
+      // inconsequential changes (whitespace between headings)
+      this.updateRenderLog(blocks, fileEmbedInput);
       return;
     }
 
     // if not already skipping and blocks are present
-    const existing_blocks = this.smartVecLite.get_children(currFileKey);
-    let existing_has_all_blocks = true;
-    if (
-      existing_blocks &&
-      Array.isArray(existing_blocks) &&
-      blocks.length > 0
-    ) {
+    const existingBlocks = this.smartVecLite?.getChildren(currFileKey);
+    let existingHasAllBlocks = true;
+    if (existingBlocks && Array.isArray(existingBlocks) && blocks.length > 0) {
       // if all blocks are in existing_blocks then skip (allows deletion of small blocks without triggering full file embedding)
       for (let j = 0; j < blocks.length; j++) {
-        if (existing_blocks.indexOf(blocks[j]) === -1) {
-          existing_has_all_blocks = false;
+        if (existingBlocks.indexOf(blocks[j]) === -1) {
+          existingHasAllBlocks = false;
           break;
         }
       }
     }
     // if existing has all blocks then check file size for delta
-    if (existing_has_all_blocks) {
+    if (existingHasAllBlocks) {
       // get current note file size
-      const curr_file_size = currFile.stat.size;
+      const currFileSize = currFile.stat.size;
       // get file size from embeddings
-      const prev_file_size = this.smartVecLite.get_size(currFileKey);
-      if (prev_file_size) {
+      const prevFileSize = this.smartVecLite?.getSize(currFileKey);
+      if (prevFileSize) {
         // if curr file size is less than 10% different from prev file size
-        const file_delta_pct = Math.round(
-          (Math.abs(curr_file_size - prev_file_size) / curr_file_size) * 100,
+        const fileDeltaPct = Math.round(
+          (Math.abs(currFileSize - prevFileSize) / currFileSize) * 100,
         );
-        if (file_delta_pct < 10) {
+        if (fileDeltaPct < 10) {
           // skip embedding
           // console.log("skipping file (size) " + curr_file.path);
-          this.renderLog.skipped_low_delta[currFile.name] =
-            file_delta_pct + '%';
-          this.update_render_log(blocks, fileEmbedInput);
+          this.renderLog.skipped_low_delta[currFile.name] = fileDeltaPct + '%';
+          this.updateRenderLog(blocks, fileEmbedInput);
           return;
         }
       }
     }
-    let meta = {
+    const meta = {
       mtime: currFile.stat.mtime,
-      hash: file_hash,
+      hash: fileHash,
       path: currFile.path,
       size: currFile.stat.size,
       children: blocks,
     };
-    // batch_promises.push(this.get_embeddings(curr_file_key, file_embed_input, meta));
     reqBatch.push([currFileKey, fileEmbedInput, meta]);
-    // send batch request
     await this.getEmbeddingsBatch(reqBatch);
 
-    // log embedding
-    // console.log("embedding: " + curr_file.path);
     if (save) {
-      // write embeddings JSON to file
       await this.saveEmbeddingsToFile();
     }
   }
 
-  update_render_log(blocks, file_embed_input) {
+  updateRenderLog(blocks, file_embed_input) {
     if (blocks.length > 0) {
       // multiply by 2 because implies we saved token spending on blocks(sections), too
       this.renderLog.tokens_saved_by_cache += file_embed_input.length / 2;
@@ -987,26 +970,19 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
    * their paths.
    */
   async findNoteConnections(currentNote: Obsidian.TFile) {
-    // md5 of current note path
     const currentKey = md5(currentNote.path);
-    // if in this.nearest_cache then set to nearest
-    // else get nearest
     let nearest: NearestResult[] = [];
     if (this.nearestCache[currentKey]) {
       nearest = this.nearestCache[currentKey];
-      // console.log("nearest from cache");
     } else {
       // skip files where path contains any exclusions
       for (let j = 0; j < this.fileExclusions.length; j++) {
         if (currentNote.path.indexOf(this.fileExclusions[j]) > -1) {
           this.log_exclusion(this.fileExclusions[j]);
-          // break out of loop and finish here
           return 'excluded';
         }
       }
-      // get all embeddings
-      // await this.get_all_embeddings();
-      // wrap get all in setTimeout to allow for UI to update
+      // Wrap get all in setTimeout to allow for UI to update
       setTimeout(() => {
         this.getAllEmbeddings();
       }, 3000);
@@ -1015,22 +991,21 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         this.smartVecLite?.mtimeIsCurrent(currentKey, currentNote.stat.mtime)
       ) {
         // skipping get file embeddings because nothing has changed
-        // console.log("find_note_connections - skipping file (mtime)");
       } else {
-        // get file embeddings
         await this.getFileEmbeddings(currentNote);
       }
       // get current note embedding vector
-      const vec = this.smartVecLite.get_vec(currentKey);
+      const vec = this.smartVecLite?.getVec(currentKey);
       if (!vec) {
         return 'Error getting embeddings for: ' + currentNote.path;
       }
 
       // compute cosine similarity between current note and all other notes via embeddings
-      nearest = this.smartVecLite.find_nearest(vec, {
-        skip_key: currentKey,
-        skip_sections: this.settings.skip_sections,
-      });
+      nearest =
+        this.smartVecLite?.findNearest(vec, {
+          skip_key: currentKey,
+          skip_sections: this.settings.skip_sections,
+        }) ?? [];
 
       // save to this.nearest_cache
       console.log('save to nearest cache', currentKey, nearest);
@@ -1158,7 +1133,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     }
   }
   // reverse-retrieve block given path
-  async block_retriever(path, limits = {}) {
+  async block_retriever(path, limits = {}): Promise<string> {
     limits = {
       lines: null,
       chars_per_line: null,
@@ -1168,7 +1143,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // return if no # in path
     if (path.indexOf('#') < 0) {
       console.log('not a block path: ' + path);
-      return false;
+      return '';
     }
     let block = [];
     let block_headings = path.split('#').slice(1);
@@ -1195,7 +1170,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     const file = this.app.vault.getAbstractFileByPath(file_path);
     if (!(file instanceof Obsidian.TFile)) {
       console.log('not a file: ' + file_path);
-      return false;
+      return '';
     }
     // get file contents
     const file_contents = await this.app.vault.cachedRead(file);
@@ -1255,7 +1230,7 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
       }
     }
     // if no begin_line then return false
-    if (begin_line === 0) return false;
+    if (begin_line === 0) return '';
     // iterate through lines starting at begin_line
     is_code = false;
     // character accumulator
@@ -1469,7 +1444,6 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
     // if settings expanded_view is false, add sc-collapsed class
     if (!this.settings.expanded_view) search_result_class += ' sc-collapsed';
 
-    // TODO: add option to group nearest by file
     if (!this.settings.group_nearest_by_file) {
       // for each nearest note
       for (let i = 0; i < nearest.length; i++) {
@@ -1556,7 +1530,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
         });
         if (nearest[i].link.indexOf('#') > -1) {
           // is block
-          Obsidian.MarkdownRenderer.renderMarkdown(
+          Obsidian.MarkdownRenderer.render(
+            this.app,
             await this.block_retriever(nearest[i].link, {
               lines: 10,
               max_chars: 1000,
@@ -1572,7 +1547,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
             max_chars: 1000,
           });
           if (!first_ten_lines) continue; // skip if file is empty
-          Obsidian.MarkdownRenderer.renderMarkdown(
+          Obsidian.MarkdownRenderer.render(
+            this.app,
             first_ten_lines,
             contents_container,
             nearest[i].link,
@@ -1727,7 +1703,8 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
             max_chars: 1000,
           });
           if (!first_ten_lines) continue; // if file not found, skip
-          Obsidian.MarkdownRenderer.renderMarkdown(
+          Obsidian.MarkdownRenderer.render(
+            this.app,
             first_ten_lines,
             block_container,
             file[0].link,
@@ -1959,22 +1936,25 @@ export default class SmartConnectionsPlugin extends Obsidian.Plugin {
 }
 
 class ScSearchApi {
-  constructor(app, plugin) {
-    this.app = app;
-    this.plugin = plugin;
-  }
-  async search(search_text, filter = {}) {
+  constructor(
+    private app: Obsidian.App,
+    private plugin: SmartConnectionsPlugin,
+  ) {}
+
+  async search(searchText: string, filter = {}) {
     filter = {
       skip_sections: this.plugin.settings.skip_sections,
       ...filter,
     };
-    let nearest = [];
-    const resp = await this.plugin.request_embedding_from_input(search_text);
+    let nearest: NearestResult[] = [];
+    const resp = await requestEmbedding(
+      [searchText],
+      this.plugin.settings.api_key,
+    );
     if (resp && resp.data && resp.data[0] && resp.data[0].embedding) {
-      nearest = this.plugin.smart_vec_lite.nearest(
-        resp.data[0].embedding,
-        filter,
-      );
+      nearest =
+        this.plugin.smartVecLite?.findNearest(resp.data[0].embedding, filter) ??
+        [];
     } else {
       // resp is null, undefined, or missing data
       new Obsidian.Notice('Smart Connections: Error getting embedding');
